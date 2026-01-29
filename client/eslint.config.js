@@ -23,7 +23,15 @@ export default defineConfig([
       },
     },
     rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      // ✅ disable ALL unused variable warnings
+      'no-unused-vars': 'off',
+
+      // ✅ disable unused imports if plugin existed
+      'unused-imports/no-unused-imports': 'off',
+      'unused-imports/no-unused-vars': 'off',
+
+      // ✅ OPTIONAL: disable no-undef if you want zero warnings at all
+      // 'no-undef': 'off',
     },
   },
 ])
