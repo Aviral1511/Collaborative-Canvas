@@ -16,18 +16,6 @@ function drawLine(ctx, start, end, style) {
     ctx.stroke();
 }
 
-// function getCanvasCoordinates(e, canvas) {
-//     const rect = canvas.getBoundingClientRect();
-
-//     const scaleX = canvas.width / rect.width;
-//     const scaleY = canvas.height / rect.height;
-
-//     return {
-//         x: (e.clientX - rect.left) * scaleX,
-//         y: (e.clientY - rect.top) * scaleY,
-//     };
-// }
-
 function getCanvasCoordinates(e, canvas) {
     const rect = canvas.getBoundingClientRect();
 
@@ -52,13 +40,7 @@ export default function CanvasBoard() {
 
     const color = "#ffffff";
     const width = 4;
-
-    // const socket = useMemo(() => {
-    //     return io(SERVER_URL, {
-    //         transports: ["polling"],   // ✅ only polling (no ws)
-    //         upgrade: false,            // ✅ don't try websocket upgrade
-    //     });
-    // }, []);
+    const [cursors, setCursors] = useState({});
 
 
     const resizeCanvas = () => {
@@ -115,6 +97,7 @@ export default function CanvasBoard() {
         socket.on("room_joined", ({ roomId }) => {
             console.log("✅ JOINED ROOM:", roomId);
             setJoinedRoom(roomId);
+            setCursors({});
         });
 
         socket.on("drawing_step", (data) => {
@@ -128,6 +111,36 @@ export default function CanvasBoard() {
             clearLocalCanvas();
         });
 
+        socket.on("room_history", ({ roomId, history }) => {
+            console.log("📜 History received for:", roomId, "segments:", history.length);
+
+            clearLocalCanvas();
+
+            const ctx = ctxRef.current;
+            if (!ctx) return;
+
+            for (let seg of history) {
+                drawLine(ctx, seg.start, seg.end, seg.style);
+            }
+        });
+
+        socket.on("cursor_move", ({ userId, x, y }) => {
+            setCursors((prev) => ({
+                ...prev,
+                [userId]: { x, y },
+            }));
+        });
+
+        socket.on("cursor_leave", ({ userId }) => {
+            setCursors((prev) => {
+                const cp = { ...prev };
+                delete cp[userId];
+                return cp;
+            });
+        });
+
+
+
         return () => {
             socket.off("connect");
             // socket.off("disconnect");
@@ -135,6 +148,9 @@ export default function CanvasBoard() {
             socket.off("room_joined");
             socket.off("drawing_step");
             socket.off("clear_canvas");
+            socket.off("room_history");
+            socket.off("cursor_move");
+            socket.off("cursor_leave");
             socket.disconnect();
         };
     }, [socket]);
@@ -156,8 +172,6 @@ export default function CanvasBoard() {
         console.log("📤 Emitting join_room:", rid);
         socket.emit("join_room", { roomId: rid });
 
-        // optional: clear local when switching rooms
-        clearLocalCanvas();
     };
 
     const clearRoomCanvas = () => {
@@ -180,15 +194,26 @@ export default function CanvasBoard() {
 
     const handlePointerMove = (e) => {
         if (!joinedRoom) return;
-        if (!isDrawingRef.current) return;
 
         const canvas = canvasRef.current;
-        const ctx = ctxRef.current;
-        if (!canvas || !ctx) return;
+        if (!canvas) return;
 
         const curr = getCanvasCoordinates(e, canvas);
-        const prev = lastPointRef.current;
 
+        // ✅ Emit cursor position always
+        socket.emit("cursor_move", {
+            roomId: joinedRoom,
+            x: curr.x,
+            y: curr.y,
+        });
+
+        // drawing logic
+        if (!isDrawingRef.current) return;
+
+        const ctx = ctxRef.current;
+        if (!ctx) return;
+
+        const prev = lastPointRef.current;
         if (!prev) {
             lastPointRef.current = curr;
             return;
@@ -208,6 +233,7 @@ export default function CanvasBoard() {
         lastPointRef.current = curr;
     };
 
+
     const handlePointerUp = () => {
         isDrawingRef.current = false;
         lastPointRef.current = null;
@@ -224,6 +250,27 @@ export default function CanvasBoard() {
                 onPointerCancel={handlePointerUp}
                 onPointerLeave={handlePointerUp}
             />
+
+            {/* Ghost Cursors Layer */}
+            <div className="absolute inset-0 pointer-events-none">
+                {Object.entries(cursors).map(([id, pos]) => (
+                    <div
+                        key={id}
+                        className="absolute"
+                        style={{
+                            left: pos.x,
+                            top: pos.y,
+                            transform: "translate(-50%, -50%)",
+                        }}
+                    >
+                        <div className="w-3 h-3 rounded-full bg-green-400 shadow-lg" />
+                        <div className="mt-1 text-[10px] text-white/70 bg-black/50 px-2 py-[2px] rounded-md">
+                            {id.slice(0, 4)}
+                        </div>
+                    </div>
+                ))}
+            </div>
+
 
             <div className="absolute top-4 left-4 w-[340px] bg-white/10 backdrop-blur-md rounded-2xl border border-white/10 p-4 space-y-3">
                 <div className="text-sm font-semibold">🎨 MVP-2 Rooms Debug</div>
