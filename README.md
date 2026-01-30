@@ -148,6 +148,16 @@ npm run dev
 - Click Undo in Tab A → only Tab A last stroke is removed ✅
 - Click Redo in Tab A → only Tab A undone stroke is restored ✅
 
+## ⚠️ Known Limitations / Notes
+
+- This project uses an in-memory server state (`roomStrokes`, redo stacks). If the backend restarts, the room drawing state resets.
+- Stroke history size is not permanently stored in a database (intentionally kept simple for this assignment).
+- Undo/Redo is **per-user** but synchronized globally (i.e., everyone sees the updated canvas state after undo/redo).
+
+## ⏱️ Time Spent
+
+- Approx. **9-11 hours** (including implementation, debugging, and testing across multiple windows)
+
 ## 🌐 Deployment
 
 ### ✅ This project is deployed and can be tested live using the hosted links.

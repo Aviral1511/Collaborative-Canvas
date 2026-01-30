@@ -194,6 +194,31 @@ Undo/Redo is done by removing strokes and replaying everything, which is:
 - conflict-safe
 - predictable across clients
 
+---
+
+## 🔄 Data Flow Diagram (Real-Time Sync)
+
+```mermaid
+flowchart LR
+
+A[User A (Client)] -->|Join Room| S[Server (Socket.io)]
+S -->|room_state (history)| B[User B (Client)]
+
+A -->|Pointer Move / Draw| S
+S -->|stroke_start / stroke_add| B
+B -->|Render stroke live| B
+
+A -->|Cursor Move| S
+S -->|cursor_move broadcast| B
+B -->|Render ghost cursor| B
+
+A -->|Undo / Redo| S
+S -->|room_state (replay)| B
+
+A -->|Clear Canvas| S
+S -->|room_state (empty)| B
+```
+
 ## ✅ Summary
 
 This architecture provides:
@@ -203,3 +228,7 @@ This architecture provides:
 - Smooth multi-user experience ✅
 - Per-user Undo/Redo without affecting others ✅
 - Ghost cursors with unique color + labels ✅
+
+```
+
+```
