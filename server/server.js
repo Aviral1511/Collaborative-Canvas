@@ -14,23 +14,28 @@ app.get("/", (req, res) => {
 });
 
 const httpServer = createServer(app);
-const allowedOrigins = [
-  process.env.CLIENT_URL,
-  "http://localhost:5173",
-  "https://collaborativecanvas-i1fjs2ciw-aviral1511s-projects.vercel.app",
-];
+// const allowedOrigins = [
+//   process.env.CLIENT_URL,
+//   "http://localhost:5173",
+//   "https://collaborativecanvas-i1fjs2ciw-aviral1511s-projects.vercel.app",
+// ];
 
 
 const io = new Server(httpServer, {
   cors: {
     origin: (origin, cb) => {
-      // allow Postman / server-to-server calls
       if (!origin) return cb(null, true);
 
-      // allow listed origins
-      if (allowedOrigins.includes(origin)) return cb(null, true);
+      // ✅ local dev
+      if (origin === "http://localhost:5173") return cb(null, true);
 
-      return cb(new Error("CORS blocked for origin: " + origin), false);
+      // ✅ allow ALL vercel preview + prod urls
+      if (origin.endsWith(".vercel.app")) return cb(null, true);
+
+      // ✅ allow your custom domain if you add later
+      if (origin === process.env.CLIENT_URL) return cb(null, true);
+
+      return cb(new Error("CORS blocked: " + origin), false);
     },
     methods: ["GET", "POST"],
   },
