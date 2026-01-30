@@ -13,7 +13,7 @@ app.get("/", (req, res) => {
 const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
-  cors: { origin: "*", methods: ["GET", "POST"] },
+  cors: { origin: process.env.CLIENT_URL || "*", methods: ["GET", "POST"] },
 });
 
 // roomId -> strokes[]
@@ -303,7 +303,7 @@ io.on("connection", (socket) => {
   });
 });
 
-const PORT = 8000;
+const PORT = process.env.PORT;
 httpServer.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });

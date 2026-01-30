@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 
-const SERVER_URL = "http://localhost:8000";
+const SERVER_URL = import.meta.env.VITE_SERVER_URL;
 
 function drawLine(ctx, start, end, style) {
     ctx.strokeStyle = style.color;
