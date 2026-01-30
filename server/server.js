@@ -21,7 +21,7 @@ const roomStrokes = new Map();
 
 // roomId -> { userId -> redoStack[] }
 const roomRedo = new Map();
-
+const roomUsers = new Map(); // roomId -> Map(userId -> {name, color})
 const roomUserColors = new Map();
 
 const PALETTE = [
@@ -62,6 +62,18 @@ function getUserRedoStack(roomId, userId) {
   return redoMap.get(userId);
 }
 
+function getUsersMap(roomId) {
+  if (!roomUsers.has(roomId)) roomUsers.set(roomId, new Map());
+  return roomUsers.get(roomId);
+}
+
+function genUserName(roomId) {
+  // simple increasing user naming per room
+  const umap = getUsersMap(roomId);
+  return `User-${umap.size + 1}`;
+}
+
+
 io.on("connection", (socket) => {
   console.log("✅ Connected:", socket.id);
   socket.data.roomId = null;
@@ -84,12 +96,46 @@ io.on("connection", (socket) => {
 
     const myColor = cmap.get(socket.id);
 
-    // send assigned color to the user
-    socket.emit("user_profile", { userId: socket.id, color: myColor });
+    const umap = getUsersMap(roomId);
 
-    // tell others about this user
-    socket.to(roomId).emit("user_joined", { userId: socket.id, color: myColor });
+    if (!umap.has(socket.id)) {
+      umap.set(socket.id, {
+        name: genUserName(roomId),
+        color: myColor, // ✅ MUST use assigned color
+      });
+    } else {
+      // ✅ if user exists, keep its stored color
+      umap.set(socket.id, {
+        ...umap.get(socket.id),
+        color: myColor,
+      });
+    }
 
+    const profile = umap.get(socket.id);
+
+    // send to current user
+    socket.emit("user_profile", {
+      userId: socket.id,
+      name: profile.name,
+      color: profile.color,
+    });
+
+    // broadcast joined info
+    socket.to(roomId).emit("user_joined", {
+      userId: socket.id,
+      name: profile.name,
+      color: profile.color,
+    });
+
+    // send full users list to everyone (optional but best)
+    io.to(roomId).emit("room_users", {
+      roomId,
+      users: Array.from(umap.entries()).map(([userId, val]) => ({
+        userId,
+        name: val.name,
+        color: val.color,
+      })),
+    });
 
     console.log(`👥 ${socket.id} joined ${roomId}`);
 
@@ -212,6 +258,19 @@ io.on("connection", (socket) => {
       socket.leave(roomId);
       console.log(`🚪 ${socket.id} left room: ${roomId}`);
 
+      const umap = getUsersMap(roomId);
+      umap.delete(socket.id);
+
+      io.to(roomId).emit("room_users", {
+        roomId,
+        users: Array.from(umap.entries()).map(([userId, val]) => ({
+          userId,
+          name: val.name,
+          color: val.color,
+        })),
+      });
+
+
       // clear current room from socket
       if (socket.data.roomId === roomId) socket.data.roomId = null;
 
@@ -225,12 +284,21 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     console.log("❌ Disconnected:", socket.id);
     if (socket.data.roomId) {
-      const cmap = getColorMap(socket.data.roomId);
-      cmap.delete(socket.id);
+      const rid = socket.data.roomId;
 
-      io.to(socket.data.roomId).emit("cursor_leave", { userId: socket.id });
-      io.to(socket.data.roomId).emit("user_left", { userId: socket.id });
+      const umap = getUsersMap(rid);
+      umap.delete(socket.id);
+
+      io.to(rid).emit("room_users", {
+        roomId: rid,
+        users: Array.from(umap.entries()).map(([userId, val]) => ({
+          userId,
+          name: val.name,
+          color: val.color,
+        })),
+      });
     }
+
 
   });
 });

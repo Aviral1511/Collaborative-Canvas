@@ -50,7 +50,7 @@ export default function CanvasBoard() {
 
     const [roomId, setRoomId] = useState("room-1");
     const [joinedRoom, setJoinedRoom] = useState("");
-
+    const [users, setUsers] = useState({});
     const [cursors, setCursors] = useState({});
 
     const [color, setColor] = useState("#ffffff");
@@ -186,9 +186,27 @@ export default function CanvasBoard() {
             remoteStrokeMapRef.current[strokeId] = obj;
         });
 
-        socket.on("user_profile", ({ color }) => {
+        socket.on("user_profile", ({ userId, name, color }) => {
+            setUsers((prev) => ({
+                ...prev,
+                [userId]: { name, color },
+            }));
             setColor(color);
         });
+
+        socket.on("user_joined", ({ userId, name, color }) => {
+            setUsers((prev) => ({
+                ...prev,
+                [userId]: { name, color },
+            }));
+        });
+
+        socket.on("room_users", ({ users }) => {
+            const map = {};
+            for (const u of users) map[u.userId] = { name: u.name, color: u.color };
+            setUsers(map);
+        });
+
 
         socket.on("room_left", ({ roomId }) => {
             console.log("🚪 room_left:", roomId);
@@ -209,6 +227,8 @@ export default function CanvasBoard() {
             socket.off("cursor_leave");
             socket.off("stroke_batch");
             socket.off("user_profile");
+            socket.off("user_joined");
+            socket.off("room_users");
             socket.off("room_left");
             socket.off("clear_canvas");
         };
@@ -259,6 +279,7 @@ export default function CanvasBoard() {
         // reset locally instantly (best UX)
         setJoinedRoom("");
         setCursors({});
+        setUsers({});
         remoteStrokeMapRef.current = {};
         clearLocalCanvas();
     };
@@ -380,22 +401,32 @@ export default function CanvasBoard() {
 
             {/* Ghost Cursors Layer */}
             <div className="absolute inset-0 z-10 pointer-events-none">
-                {Object.entries(cursors).map(([id, pos]) => (
-                    <div
-                        key={id}
-                        className="absolute select-none"
-                        style={{
-                            left: pos.x,
-                            top: pos.y,
-                            transform: "translate(-50%, -50%)",
-                        }}
-                    >
-                        <div className="w-3.5 h-3.5 rounded-full bg-green-400 shadow-[0_0_10px_rgba(34,197,94,0.9)]" />
-                        <div className="mt-1 text-[10px] font-medium text-white/80 bg-black/60 px-2 py-0.5 rounded-lg border border-white/10 backdrop-blur">
-                            {id.slice(0, 4)}
+                {Object.entries(cursors).map(([id, pos]) => {
+                    const meta = users[id];
+                    const nm = meta?.name || id.slice(0, 4);
+                    const col = meta?.color || "#22c55e";
+
+                    return (
+                        <div
+                            key={id}
+                            className="absolute"
+                            style={{
+                                left: pos.x,
+                                top: pos.y,
+                                transform: "translate(-50%, -50%)",
+                            }}
+                        >
+                            <div
+                                className="w-3 h-3 rounded-full shadow-lg"
+                                style={{ backgroundColor: col }}
+                            />
+                            <div className="mt-1 text-[10px] text-white/80 bg-black/60 px-2 py-[2px] rounded-md">
+                                {nm}
+                            </div>
                         </div>
-                    </div>
-                ))}
+                    );
+                })}
+
             </div>
 
             {/* Panel */}
