@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import { socket } from "../socket.js";
 
-const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:5000";
+const SERVER_URL = "http://localhost:8000";
 
 function drawLine(ctx, start, end, style) {
     ctx.strokeStyle = style.color;
@@ -16,15 +15,22 @@ function drawLine(ctx, start, end, style) {
     ctx.stroke();
 }
 
+function drawStroke(ctx, stroke) {
+    const pts = stroke.points || [];
+    if (pts.length < 2) return;
+
+    for (let i = 1; i < pts.length; i++) {
+        drawLine(ctx, pts[i - 1], pts[i], stroke.style);
+    }
+}
+
 function getCanvasCoordinates(e, canvas) {
     const rect = canvas.getBoundingClientRect();
-
     return {
         x: e.clientX - rect.left,
         y: e.clientY - rect.top,
     };
 }
-
 
 export default function CanvasBoard() {
     const canvasRef = useRef(null);
@@ -33,15 +39,24 @@ export default function CanvasBoard() {
     const isDrawingRef = useRef(false);
     const lastPointRef = useRef(null);
 
+    const myStrokeIdRef = useRef(null);
+
+    // strokeId -> { last, style }
+    const remoteStrokeMapRef = useRef({});
+
     const [roomId, setRoomId] = useState("room-1");
     const [joinedRoom, setJoinedRoom] = useState("");
-    const [sockId, setSockId] = useState("");
-    const [status, setStatus] = useState("DISCONNECTED");
+
+    const [cursors, setCursors] = useState({});
 
     const color = "#ffffff";
     const width = 4;
-    const [cursors, setCursors] = useState({});
 
+    const socket = useMemo(() => {
+        return io(SERVER_URL, {
+            transports: ["polling", "websocket"],
+        });
+    }, []);
 
     const resizeCanvas = () => {
         const canvas = canvasRef.current;
@@ -57,7 +72,6 @@ export default function CanvasBoard() {
 
         const ctx = canvas.getContext("2d");
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
         ctxRef.current = ctx;
     };
 
@@ -75,55 +89,65 @@ export default function CanvasBoard() {
     }, []);
 
     useEffect(() => {
-        // ✅ socket connection logs
         socket.on("connect", () => {
-            console.log("✅ CONNECTED", socket.id);
-            setSockId(socket.id);
-            setStatus("CONNECTED");
-        });
-
-        socket.on("disconnect", () => {
-            console.log("❌ DISCONNECTED");
-            setStatus("DISCONNECTED");
-            setSockId("");
-            setJoinedRoom("");
-        });
-
-        socket.on("connect_error", (err) => {
-            console.log("❌ CONNECT ERROR:", err.message);
-            setStatus("ERROR: " + err.message);
+            console.log("✅ CONNECTED:", socket.id);
         });
 
         socket.on("room_joined", ({ roomId }) => {
-            console.log("✅ JOINED ROOM:", roomId);
+            console.log("✅ Joined room:", roomId);
             setJoinedRoom(roomId);
             setCursors({});
         });
 
-        socket.on("drawing_step", (data) => {
-            const ctx = ctxRef.current;
-            if (!ctx) return;
-            drawLine(ctx, data.start, data.end, data.style);
-        });
-
-        socket.on("clear_canvas", () => {
-            console.log("🧹 CLEAR CANVAS RECEIVED");
-            clearLocalCanvas();
-        });
-
-        socket.on("room_history", ({ roomId, history }) => {
-            console.log("📜 History received for:", roomId, "segments:", history.length);
+        // ✅ FULL STATE: clear and redraw everything
+        socket.on("room_state", ({ roomId, strokes }) => {
+            console.log("📦 room_state", roomId, strokes.length);
 
             clearLocalCanvas();
+            remoteStrokeMapRef.current = {};
 
             const ctx = ctxRef.current;
             if (!ctx) return;
 
-            for (let seg of history) {
-                drawLine(ctx, seg.start, seg.end, seg.style);
+            for (const s of strokes) {
+                drawStroke(ctx, s);
+                if (s.points?.length) {
+                    remoteStrokeMapRef.current[s.id] = {
+                        last: s.points[s.points.length - 1],
+                        style: s.style,
+                    };
+                }
             }
         });
 
+        // ✅ LIVE REMOTE STROKES
+        socket.on("stroke_start", (stroke) => {
+            if (!stroke?.id) return;
+
+            remoteStrokeMapRef.current[stroke.id] = {
+                last: stroke.points?.[0] || null,
+                style: stroke.style,
+            };
+        });
+
+        socket.on("stroke_add", ({ strokeId, point }) => {
+            const ctx = ctxRef.current;
+            if (!ctx) return;
+
+            const obj = remoteStrokeMapRef.current[strokeId];
+            if (!obj || !obj.last) {
+                remoteStrokeMapRef.current[strokeId] = {
+                    last: point,
+                    style: obj?.style,
+                };
+                return;
+            }
+
+            drawLine(ctx, obj.last, point, obj.style);
+            remoteStrokeMapRef.current[strokeId] = { last: point, style: obj.style };
+        });
+
+        // ghost cursors
         socket.on("cursor_move", ({ userId, x, y }) => {
             setCursors((prev) => ({
                 ...prev,
@@ -139,39 +163,32 @@ export default function CanvasBoard() {
             });
         });
 
-
+        socket.on("clear_canvas", () => {
+            clearLocalCanvas();
+            remoteStrokeMapRef.current = {};
+        });
 
         return () => {
             socket.off("connect");
-            // socket.off("disconnect");
-            socket.off("connect_error");
             socket.off("room_joined");
-            socket.off("drawing_step");
-            socket.off("clear_canvas");
-            socket.off("room_history");
+            socket.off("room_state");
+            socket.off("stroke_start");
+            socket.off("stroke_add");
             socket.off("cursor_move");
             socket.off("cursor_leave");
-            socket.disconnect();
+            socket.off("clear_canvas");
         };
     }, [socket]);
 
     const joinRoom = () => {
-        console.log("🟦 JOIN CLICKED");
-
         const rid = roomId.trim();
-        if (!rid) {
-            console.log("⚠️ roomId empty");
-            return;
-        }
-
-        // if (!socket.connected) {
-        //     console.log("⚠️ Socket not connected yet");
-        //     return;
-        // }
-
-        console.log("📤 Emitting join_room:", rid);
+        if (!rid) return;
         socket.emit("join_room", { roomId: rid });
+    };
 
+    const undoMyStroke = () => {
+        if (!joinedRoom) return;
+        socket.emit("undo", { roomId: joinedRoom });
     };
 
     const clearRoomCanvas = () => {
@@ -190,6 +207,19 @@ export default function CanvasBoard() {
 
         const pt = getCanvasCoordinates(e, canvas);
         lastPointRef.current = pt;
+
+        const strokeId = crypto.randomUUID?.() || String(Date.now()) + Math.random();
+        myStrokeIdRef.current = strokeId;
+
+        const style = { color, width };
+
+        // start stroke on server (and others)
+        socket.emit("stroke_start", {
+            roomId: joinedRoom,
+            strokeId,
+            point: pt,
+            style,
+        });
     };
 
     const handlePointerMove = (e) => {
@@ -200,14 +230,13 @@ export default function CanvasBoard() {
 
         const curr = getCanvasCoordinates(e, canvas);
 
-        // ✅ Emit cursor position always
+        // cursor always
         socket.emit("cursor_move", {
             roomId: joinedRoom,
             x: curr.x,
             y: curr.y,
         });
 
-        // drawing logic
         if (!isDrawingRef.current) return;
 
         const ctx = ctxRef.current;
@@ -220,23 +249,31 @@ export default function CanvasBoard() {
         }
 
         const style = { color, width };
-
         drawLine(ctx, prev, curr, style);
 
-        socket.emit("drawing_step", {
+        socket.emit("stroke_add", {
             roomId: joinedRoom,
-            start: prev,
-            end: curr,
-            style,
+            strokeId: myStrokeIdRef.current,
+            point: curr,
         });
 
         lastPointRef.current = curr;
     };
 
-
     const handlePointerUp = () => {
+        if (!joinedRoom) return;
+
         isDrawingRef.current = false;
         lastPointRef.current = null;
+
+        if (myStrokeIdRef.current) {
+            socket.emit("stroke_end", {
+                roomId: joinedRoom,
+                strokeId: myStrokeIdRef.current,
+            });
+        }
+
+        myStrokeIdRef.current = null;
     };
 
     return (
@@ -271,24 +308,9 @@ export default function CanvasBoard() {
                 ))}
             </div>
 
-
+            {/* Panel */}
             <div className="absolute top-4 left-4 w-[340px] bg-white/10 backdrop-blur-md rounded-2xl border border-white/10 p-4 space-y-3">
-                <div className="text-sm font-semibold">🎨 MVP-2 Rooms Debug</div>
-
-                <div className="text-xs text-white/70 space-y-1">
-                    <div>
-                        Socket: <span className="text-white">{status}</span>
-                    </div>
-                    <div>
-                        SocketId: <span className="text-white">{sockId || "-"}</span>
-                    </div>
-                    <div>
-                        Room:{" "}
-                        <span className={joinedRoom ? "text-green-300" : "text-yellow-300"}>
-                            {joinedRoom || "Not joined"}
-                        </span>
-                    </div>
-                </div>
+                <div className="text-sm font-semibold">🎨 MVP-5 Undo</div>
 
                 <div className="flex gap-2">
                     <input
@@ -305,6 +327,22 @@ export default function CanvasBoard() {
                     </button>
                 </div>
 
+                <div className="text-xs text-white/70">
+                    Room:{" "}
+                    <span className={joinedRoom ? "text-green-300" : "text-yellow-300"}>
+                        {joinedRoom || "Not joined"}
+                    </span>
+                </div>
+
+                <button
+                    onClick={undoMyStroke}
+                    disabled={!joinedRoom}
+                    className="w-full px-3 py-2 rounded-xl text-sm font-semibold border border-white/10
+          bg-blue-500/90 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                    Undo (My Last Stroke)
+                </button>
+
                 <button
                     onClick={clearRoomCanvas}
                     disabled={!joinedRoom}
@@ -313,10 +351,6 @@ export default function CanvasBoard() {
                 >
                     Clear Room Canvas
                 </button>
-
-                <div className="text-[11px] text-white/60">
-                    Open <b>two tabs</b>, join same roomId, then draw ✅
-                </div>
             </div>
 
             {!joinedRoom && (
@@ -332,5 +366,3 @@ export default function CanvasBoard() {
         </div>
     );
 }
-
-
