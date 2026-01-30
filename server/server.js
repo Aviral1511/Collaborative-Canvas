@@ -14,7 +14,9 @@ const httpServer = createServer(app);
 const allowedOrigins = [
   process.env.CLIENT_URL,
   "http://localhost:5173",
+  "https://collaborativecanvas-i1fjs2ciw-aviral1511s-projects.vercel.app",
 ];
+
 
 const io = new Server(httpServer, {
   cors: {
@@ -318,7 +320,7 @@ io.on("connection", (socket) => {
   });
 });
 
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 8000;
 httpServer.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
