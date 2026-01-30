@@ -22,6 +22,30 @@ const roomStrokes = new Map();
 // roomId -> { userId -> redoStack[] }
 const roomRedo = new Map();
 
+const roomUserColors = new Map();
+
+const PALETTE = [
+  "#ffffff", "#22c55e", "#3b82f6", "#eab308",
+  "#ef4444", "#a855f7", "#06b6d4", "#f97316"
+];
+
+function getColorMap(roomId) {
+  if (!roomUserColors.has(roomId)) roomUserColors.set(roomId, new Map());
+  return roomUserColors.get(roomId);
+}
+
+function pickColor(roomId) {
+  const cmap = getColorMap(roomId);
+  const used = new Set([...cmap.values()]);
+
+  for (const c of PALETTE) {
+    if (!used.has(c)) return c;
+  }
+  // fallback if all used
+  return PALETTE[Math.floor(Math.random() * PALETTE.length)];
+}
+
+
 function getStrokes(roomId) {
   if (!roomStrokes.has(roomId)) roomStrokes.set(roomId, []);
   return roomStrokes.get(roomId);
@@ -51,6 +75,21 @@ io.on("connection", (socket) => {
 
     socket.join(roomId);
     socket.data.roomId = roomId;
+
+    const cmap = getColorMap(roomId);
+
+    if (!cmap.has(socket.id)) {
+      cmap.set(socket.id, pickColor(roomId));
+    }
+
+    const myColor = cmap.get(socket.id);
+
+    // send assigned color to the user
+    socket.emit("user_profile", { userId: socket.id, color: myColor });
+
+    // tell others about this user
+    socket.to(roomId).emit("user_joined", { userId: socket.id, color: myColor });
+
 
     console.log(`👥 ${socket.id} joined ${roomId}`);
 
@@ -167,12 +206,32 @@ io.on("connection", (socket) => {
     socket.to(roomId).emit("stroke_batch", { strokeId, points });
   });
 
+    socket.on("leave_room", ({ roomId }) => {
+      if (!roomId) return;
+
+      socket.leave(roomId);
+      console.log(`🚪 ${socket.id} left room: ${roomId}`);
+
+      // clear current room from socket
+      if (socket.data.roomId === roomId) socket.data.roomId = null;
+
+      // notify others (optional but good)
+      io.to(roomId).emit("cursor_leave", { userId: socket.id });
+      io.to(roomId).emit("user_left", { userId: socket.id });
+
+      socket.emit("room_left", { roomId });
+    });
 
   socket.on("disconnect", () => {
     console.log("❌ Disconnected:", socket.id);
     if (socket.data.roomId) {
+      const cmap = getColorMap(socket.data.roomId);
+      cmap.delete(socket.id);
+
       io.to(socket.data.roomId).emit("cursor_leave", { userId: socket.id });
+      io.to(socket.data.roomId).emit("user_left", { userId: socket.id });
     }
+
   });
 });
 

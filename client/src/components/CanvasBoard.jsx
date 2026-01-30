@@ -57,6 +57,8 @@ export default function CanvasBoard() {
     const [width, setWidth] = useState(4);
     const [mode, setMode] = useState("pen"); // "pen" | "eraser"
 
+    const incSize = () => setWidth((w) => Math.min(20, w + 1));
+    const decSize = () => setWidth((w) => Math.max(2, w - 1));
 
     const socket = useMemo(() => {
         return io(SERVER_URL, {
@@ -184,6 +186,13 @@ export default function CanvasBoard() {
             remoteStrokeMapRef.current[strokeId] = obj;
         });
 
+        socket.on("user_profile", ({ color }) => {
+            setColor(color);
+        });
+
+        socket.on("room_left", ({ roomId }) => {
+            console.log("🚪 room_left:", roomId);
+        });
 
         socket.on("clear_canvas", () => {
             clearLocalCanvas();
@@ -199,6 +208,8 @@ export default function CanvasBoard() {
             socket.off("cursor_move");
             socket.off("cursor_leave");
             socket.off("stroke_batch");
+            socket.off("user_profile");
+            socket.off("room_left");
             socket.off("clear_canvas");
         };
     }, [socket]);
@@ -239,6 +250,19 @@ export default function CanvasBoard() {
 
         batchRef.current = [];
     };
+
+    const leaveRoom = () => {
+        if (!joinedRoom) return;
+
+        socket.emit("leave_room", { roomId: joinedRoom });
+
+        // reset locally instantly (best UX)
+        setJoinedRoom("");
+        setCursors({});
+        remoteStrokeMapRef.current = {};
+        clearLocalCanvas();
+    };
+
 
 
     const handlePointerDown = (e) => {
@@ -342,10 +366,11 @@ export default function CanvasBoard() {
     };
 
     return (
-        <div className="relative h-full w-full overflow-hidden">
+        <div className="relative h-screen w-screen overflow-hidden bg-black">
+            {/* Canvas */}
             <canvas
                 ref={canvasRef}
-                className="h-full w-full touch-none cursor-crosshair"
+                className="absolute inset-0 z-0 h-full w-full touch-none cursor-crosshair"
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
@@ -354,19 +379,19 @@ export default function CanvasBoard() {
             />
 
             {/* Ghost Cursors Layer */}
-            <div className="absolute inset-0 pointer-events-none">
+            <div className="absolute inset-0 z-10 pointer-events-none">
                 {Object.entries(cursors).map(([id, pos]) => (
                     <div
                         key={id}
-                        className="absolute"
+                        className="absolute select-none"
                         style={{
                             left: pos.x,
                             top: pos.y,
                             transform: "translate(-50%, -50%)",
                         }}
                     >
-                        <div className="w-3 h-3 rounded-full bg-green-400 shadow-lg" />
-                        <div className="mt-1 text-[10px] text-white/70 bg-black/50 px-2 py-0.5 rounded-md">
+                        <div className="w-3.5 h-3.5 rounded-full bg-green-400 shadow-[0_0_10px_rgba(34,197,94,0.9)]" />
+                        <div className="mt-1 text-[10px] font-medium text-white/80 bg-black/60 px-2 py-0.5 rounded-lg border border-white/10 backdrop-blur">
                             {id.slice(0, 4)}
                         </div>
                     </div>
@@ -374,33 +399,82 @@ export default function CanvasBoard() {
             </div>
 
             {/* Panel */}
-            <div className="absolute top-4 left-4 w-85 bg-white/10 backdrop-blur-md rounded-2xl border border-white/10 p-4 space-y-3">
-                <div className="text-sm font-semibold">🎨 MVP-5 Undo</div>
+            <div
+                className="
+      absolute top-4 left-4 z-50 w-85
+      rounded-2xl border border-white/10
+      bg-white/10 backdrop-blur-xl
+      shadow-2xl shadow-black/40
+      p-4 space-y-4
+    "
+            >
+                <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold tracking-wide text-white">
+                        🎨 MVP-5 Undo
+                    </div>
 
-                <div className="flex gap-2">
-                    <input
-                        value={roomId}
-                        onChange={(e) => setRoomId(e.target.value)}
-                        placeholder="Enter Room ID"
-                        className="flex-1 px-3 py-2 rounded-xl bg-black/40 border border-white/10 outline-none text-sm"
-                    />
-                    <button
-                        onClick={joinRoom}
-                        className="px-3 py-2 rounded-xl bg-white text-black text-sm font-semibold hover:bg-white/90"
-                    >
-                        Join
-                    </button>
+                    <div className="text-[11px] px-2 py-1 rounded-full bg-black/40 border border-white/10 text-white/70">
+                        Live
+                    </div>
                 </div>
 
-                <div className="text-xs text-white/70">
-                    Room:{" "}
-                    <span className={joinedRoom ? "text-green-300" : "text-yellow-300"}>
-                        {joinedRoom || "Not joined"}
-                    </span>
+                {/* Room Join */}
+                <div className="space-y-2">
+                    <div className="text-[11px] uppercase tracking-wider text-white/50">
+                        Room
+                    </div>
+
+                    <div className="flex gap-2">
+                        <input
+                            value={roomId}
+                            onChange={(e) => setRoomId(e.target.value)}
+                            placeholder="Enter Room ID"
+                            className="
+            flex-1 px-3 py-2 rounded-xl
+            bg-black/40 border border-white/10
+            text-white placeholder:text-white/40
+            outline-none text-sm
+            focus:border-white/30 focus:ring-2 focus:ring-white/10
+            transition
+          "
+                        />
+
+                        <button
+                            onClick={joinRoom}
+                            disabled={!!joinedRoom}
+                            className={`px-4 py-2 rounded-xl text-sm font-semibold transition active:scale-[0.98]
+            ${!roomId.trim()
+                                    ? "bg-white/20 text-white/40 cursor-not-allowed"
+                                    : "bg-white text-black hover:bg-white/90 cursor-pointer"
+                                }
+          `}
+                        >
+                            Join
+                        </button>
+                        <button
+                            onClick={leaveRoom}
+                            disabled={!joinedRoom}
+                            className="w-full px-3 py-2 rounded-xl text-sm font-semibold border border-white/10
+  bg-zinc-700/90 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                        >
+                            Leave Room
+                        </button>
+
+                    </div>
+
+                    <div className="text-xs text-white/70">
+                        Room:{" "}
+                        <span className={joinedRoom ? "text-green-300" : "text-yellow-300"}>
+                            {joinedRoom || "Not joined"}
+                        </span>
+                    </div>
                 </div>
 
+                {/* Brush Section */}
                 <div className="space-y-3">
-                    <div className="text-xs text-white/70 font-semibold">Brush</div>
+                    <div className="text-[11px] uppercase tracking-wider text-white/50">
+                        Brush
+                    </div>
 
                     {/* Colors */}
                     <div className="flex gap-2 flex-wrap">
@@ -412,84 +486,158 @@ export default function CanvasBoard() {
                                         setMode("pen");
                                         setColor(c);
                                     }}
-                                    className={`w-7 h-7 rounded-full border ${color === c && mode === "pen"
-                                        ? "border-white"
-                                        : "border-white/20"
-                                        }`}
+                                    className={`
+                w-8 h-8 rounded-full
+                border transition
+                hover:scale-105 active:scale-95
+                ${color === c && mode === "pen"
+                                            ? "border-white shadow-[0_0_12px_rgba(255,255,255,0.5)]"
+                                            : "border-white/15 hover:border-white/40"
+                                        }
+              `}
                                     style={{ backgroundColor: c }}
                                 />
                             )
                         )}
                     </div>
 
+                    {/* Color Picker */}
+                    <div className="flex items-center gap-3">
+                        <div className="text-xs text-white/70 w-12">Pick</div>
+
+                        <input
+                            type="color"
+                            value={color}
+                            onChange={(e) => {
+                                setMode("pen");
+                                setColor(e.target.value);
+                            }}
+                            className="
+            w-10 h-9 p-0 rounded-lg
+            border border-white/10 bg-transparent
+            cursor-pointer
+          "
+                        />
+
+                        <div className="text-[11px] font-mono text-white/70">{color}</div>
+                    </div>
+
                     {/* Size */}
                     <div className="flex items-center gap-3">
                         <div className="text-xs text-white/70 w-12">Size</div>
-                        <input
-                            type="range"
-                            min={2}
-                            max={20}
-                            value={width}
-                            onChange={(e) => setWidth(Number(e.target.value))}
-                            className="flex-1"
-                        />
-                        <div className="text-xs text-white">{width}</div>
+
+                        <button
+                            onClick={decSize}
+                            className="
+            px-3 py-1 rounded-lg
+            bg-black/40 border border-white/10
+            hover:bg-black/60 transition active:scale-95
+            text-white
+          "
+                        >
+                            -
+                        </button>
+
+                        <div className="text-xs w-8 text-center text-white font-semibold">
+                            {width}
+                        </div>
+
+                        <button
+                            onClick={incSize}
+                            className="
+            px-3 py-1 rounded-lg
+            bg-black/40 border border-white/10
+            hover:bg-black/60 transition active:scale-95
+            text-white
+          "
+                        >
+                            +
+                        </button>
                     </div>
 
                     {/* Mode */}
                     <div className="flex gap-2">
                         <button
                             onClick={() => setMode("pen")}
-                            className={`flex-1 px-3 py-2 rounded-xl text-sm font-semibold border border-white/10 ${mode === "pen" ? "bg-white text-black" : "bg-black/30 text-white"
-                                }`}
+                            className={`
+            flex-1 px-3 py-2 rounded-xl text-sm font-semibold
+            border border-white/10 transition active:scale-[0.98]
+            ${mode === "pen"
+                                    ? "bg-white text-black"
+                                    : "bg-black/30 text-white hover:bg-black/50"
+                                }
+          `}
                         >
                             ✏️ Pen
                         </button>
 
                         <button
                             onClick={() => setMode("eraser")}
-                            className={`flex-1 px-3 py-2 rounded-xl text-sm font-semibold border border-white/10 ${mode === "eraser" ? "bg-white text-black" : "bg-black/30 text-white"
-                                }`}
+                            className={`
+            flex-1 px-3 py-2 rounded-xl text-sm font-semibold
+            border border-white/10 transition active:scale-[0.98]
+            ${mode === "eraser"
+                                    ? "bg-white text-black"
+                                    : "bg-black/30 text-white hover:bg-black/50"
+                                }
+          `}
                         >
                             🧽 Eraser
                         </button>
                     </div>
                 </div>
 
+                {/* Actions */}
+                <div className="space-y-2 pt-2">
+                    <button
+                        onClick={undoMyStroke}
+                        disabled={!joinedRoom}
+                        className="
+          w-full px-3 py-2 rounded-xl text-sm font-semibold
+          border border-white/10 transition active:scale-[0.98]
+          bg-blue-500/90 hover:bg-blue-500
+          disabled:opacity-40 disabled:cursor-not-allowed
+          text-white
+        "
+                    >
+                        Undo (My Last Stroke)
+                    </button>
 
-                <button
-                    onClick={undoMyStroke}
-                    disabled={!joinedRoom}
-                    className="w-full px-3 py-2 rounded-xl text-sm font-semibold border border-white/10
-          bg-blue-500/90 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                    Undo (My Last Stroke)
-                </button>
+                    <button
+                        onClick={redoMyStroke}
+                        disabled={!joinedRoom}
+                        className="
+          w-full px-3 py-2 rounded-xl text-sm font-semibold
+          border border-white/10 transition active:scale-[0.98]
+          bg-purple-500/90 hover:bg-purple-500
+          disabled:opacity-40 disabled:cursor-not-allowed
+          text-white
+        "
+                    >
+                        Redo (My Stroke)
+                    </button>
 
-                <button
-                    onClick={redoMyStroke}
-                    disabled={!joinedRoom}
-                    className="w-full px-3 py-2 rounded-xl text-sm font-semibold border border-white/10
-  bg-purple-500/90 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                    Redo (My Stroke)
-                </button>
-
-
-                <button
-                    onClick={clearRoomCanvas}
-                    disabled={!joinedRoom}
-                    className="w-full px-3 py-2 rounded-xl text-sm font-semibold border border-white/10
-          bg-red-500/90 hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                    Clear Room Canvas
-                </button>
+                    <button
+                        onClick={clearRoomCanvas}
+                        disabled={!joinedRoom}
+                        className="
+          w-full px-3 py-2 rounded-xl text-sm font-semibold
+          border border-white/10 transition active:scale-[0.98]
+          bg-red-500/90 hover:bg-red-500
+          disabled:opacity-40 disabled:cursor-not-allowed
+          text-white
+        "
+                    >
+                        Clear Room Canvas
+                    </button>
+                </div>
             </div>
 
+            {/* Join Overlay */}
             {!joinedRoom && (
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="bg-black/60 border border-white/10 rounded-2xl px-6 py-4 text-center">
-                        <div className="text-lg font-bold">Join a Room to Start</div>
+                <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
+                    <div className="bg-black/60 border border-white/10 rounded-2xl px-6 py-4 text-center backdrop-blur-md shadow-xl shadow-black/40">
+                        <div className="text-lg font-bold text-white">Join a Room to Start</div>
                         <div className="text-sm text-white/70 mt-1">
                             Enter a Room ID & click Join
                         </div>
@@ -497,5 +645,6 @@ export default function CanvasBoard() {
                 </div>
             )}
         </div>
+
     );
 }
