@@ -7,7 +7,7 @@ const app = express();
 app.use(cors({ origin: "*" }));
 
 app.get("/", (req, res) => {
-  res.send("✅ Collaborative Canvas Server Running (MVP-5 Final)");
+  res.send("✅ Collaborative Canvas Server Running (MVP-6 Redo)");
 });
 
 const httpServer = createServer(app);
@@ -19,9 +19,23 @@ const io = new Server(httpServer, {
 // roomId -> strokes[]
 const roomStrokes = new Map();
 
+// roomId -> { userId -> redoStack[] }
+const roomRedo = new Map();
+
 function getStrokes(roomId) {
   if (!roomStrokes.has(roomId)) roomStrokes.set(roomId, []);
   return roomStrokes.get(roomId);
+}
+
+function getRedoMap(roomId) {
+  if (!roomRedo.has(roomId)) roomRedo.set(roomId, new Map());
+  return roomRedo.get(roomId);
+}
+
+function getUserRedoStack(roomId, userId) {
+  const redoMap = getRedoMap(roomId);
+  if (!redoMap.has(userId)) redoMap.set(userId, []);
+  return redoMap.get(userId);
 }
 
 io.on("connection", (socket) => {
@@ -31,7 +45,6 @@ io.on("connection", (socket) => {
   socket.on("join_room", ({ roomId }) => {
     if (!roomId) return;
 
-    // leave old rooms
     for (const r of socket.rooms) {
       if (r !== socket.id) socket.leave(r);
     }
@@ -41,18 +54,19 @@ io.on("connection", (socket) => {
 
     console.log(`👥 ${socket.id} joined ${roomId}`);
 
-    // send full state to this client
     socket.emit("room_state", { roomId, strokes: getStrokes(roomId) });
     socket.emit("room_joined", { roomId });
   });
 
-  // CLIENT sends strokeId (important)
   socket.on("stroke_start", ({ roomId, strokeId, point, style }) => {
     if (!roomId || !strokeId || !point || !style) return;
 
     const strokes = getStrokes(roomId);
 
-    // add new stroke
+    // ✅ NEW STROKE => CLEAR redo stack for this user (standard UX)
+    const redoStack = getUserRedoStack(roomId, socket.id);
+    redoStack.length = 0;
+
     strokes.push({
       id: strokeId,
       userId: socket.id,
@@ -61,7 +75,6 @@ io.on("connection", (socket) => {
       ts: Date.now(),
     });
 
-    // broadcast to others in room
     socket.to(roomId).emit("stroke_start", {
       id: strokeId,
       userId: socket.id,
@@ -77,11 +90,10 @@ io.on("connection", (socket) => {
     const s = strokes.find((x) => x.id === strokeId);
 
     if (!s) return;
-    if (s.userId !== socket.id) return; // only owner updates
+    if (s.userId !== socket.id) return;
 
     s.points.push(point);
 
-    // broadcast only delta
     socket.to(roomId).emit("stroke_add", { strokeId, point });
   });
 
@@ -94,35 +106,67 @@ io.on("connection", (socket) => {
     if (!roomId) return;
 
     const strokes = getStrokes(roomId);
+    const redoStack = getUserRedoStack(roomId, socket.id);
 
-    // remove only last stroke of this user
-    let removed = false;
+    // remove last stroke of this user
     for (let i = strokes.length - 1; i >= 0; i--) {
       if (strokes[i].userId === socket.id) {
-        strokes.splice(i, 1);
-        removed = true;
+        const removed = strokes.splice(i, 1)[0];
+        redoStack.push(removed);
         break;
       }
     }
 
-    console.log("↩️ Undo by", socket.id, "removed?", removed);
+    io.to(roomId).emit("room_state", { roomId, strokes });
+  });
 
-    // send updated full state
+  socket.on("redo", ({ roomId }) => {
+    if (!roomId) return;
+
+    const strokes = getStrokes(roomId);
+    const redoStack = getUserRedoStack(roomId, socket.id);
+
+    if (redoStack.length === 0) return;
+
+    const restored = redoStack.pop();
+    strokes.push(restored);
+
     io.to(roomId).emit("room_state", { roomId, strokes });
   });
 
   socket.on("clear_canvas", ({ roomId }) => {
-    if (!roomId) return;
+      if (!roomId) return;
 
-    roomStrokes.set(roomId, []);
-    io.to(roomId).emit("clear_canvas");
-    io.to(roomId).emit("room_state", { roomId, strokes: [] });
+      roomStrokes.set(roomId, []);
+      roomRedo.set(roomId, new Map());
+
+      io.to(roomId).emit("clear_canvas");
+      io.to(roomId).emit("room_state", { roomId, strokes: [] });
+    });
+
+    socket.on("cursor_move", ({ roomId, x, y }) => {
+      if (!roomId) return;
+      socket.to(roomId).emit("cursor_move", { userId: socket.id, x, y });
+    });
+
+    socket.on("stroke_batch", ({ roomId, strokeId, points }) => {
+    if (!roomId || !strokeId || !Array.isArray(points) || points.length === 0)
+      return;
+
+    const strokes = getStrokes(roomId);
+    const s = strokes.find((x) => x.id === strokeId);
+    if (!s) return;
+
+    // owner only
+    if (s.userId !== socket.id) return;
+
+    // push all points
+    for (const p of points) s.points.push(p);
+
+    // broadcast to others
+    socket.to(roomId).emit("stroke_batch", { strokeId, points });
   });
 
-  socket.on("cursor_move", ({ roomId, x, y }) => {
-    if (!roomId) return;
-    socket.to(roomId).emit("cursor_move", { userId: socket.id, x, y });
-  });
 
   socket.on("disconnect", () => {
     console.log("❌ Disconnected:", socket.id);

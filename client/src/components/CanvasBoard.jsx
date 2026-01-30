@@ -44,13 +44,19 @@ export default function CanvasBoard() {
     // strokeId -> { last, style }
     const remoteStrokeMapRef = useRef({});
 
+    const batchRef = useRef([]);
+    const rafRef = useRef(null);
+
+
     const [roomId, setRoomId] = useState("room-1");
     const [joinedRoom, setJoinedRoom] = useState("");
 
     const [cursors, setCursors] = useState({});
 
-    const color = "#ffffff";
-    const width = 4;
+    const [color, setColor] = useState("#ffffff");
+    const [width, setWidth] = useState(4);
+    const [mode, setMode] = useState("pen"); // "pen" | "eraser"
+
 
     const socket = useMemo(() => {
         return io(SERVER_URL, {
@@ -163,6 +169,22 @@ export default function CanvasBoard() {
             });
         });
 
+        socket.on("stroke_batch", ({ strokeId, points }) => {
+            const ctx = ctxRef.current;
+            if (!ctx) return;
+
+            const obj = remoteStrokeMapRef.current[strokeId];
+            if (!obj || !obj.last) return;
+
+            for (const p of points) {
+                drawLine(ctx, obj.last, p, obj.style);
+                obj.last = p;
+            }
+
+            remoteStrokeMapRef.current[strokeId] = obj;
+        });
+
+
         socket.on("clear_canvas", () => {
             clearLocalCanvas();
             remoteStrokeMapRef.current = {};
@@ -176,6 +198,7 @@ export default function CanvasBoard() {
             socket.off("stroke_add");
             socket.off("cursor_move");
             socket.off("cursor_leave");
+            socket.off("stroke_batch");
             socket.off("clear_canvas");
         };
     }, [socket]);
@@ -196,6 +219,28 @@ export default function CanvasBoard() {
         socket.emit("clear_canvas", { roomId: joinedRoom });
     };
 
+    const redoMyStroke = () => {
+        if (!joinedRoom) return;
+        socket.emit("redo", { roomId: joinedRoom });
+    };
+
+    const flushBatch = () => {
+        if (!joinedRoom) return;
+        if (!myStrokeIdRef.current) return;
+
+        const pts = batchRef.current;
+        if (pts.length === 0) return;
+
+        socket.emit("stroke_batch", {
+            roomId: joinedRoom,
+            strokeId: myStrokeIdRef.current,
+            points: pts,
+        });
+
+        batchRef.current = [];
+    };
+
+
     const handlePointerDown = (e) => {
         if (!joinedRoom) return;
 
@@ -211,7 +256,11 @@ export default function CanvasBoard() {
         const strokeId = crypto.randomUUID?.() || String(Date.now()) + Math.random();
         myStrokeIdRef.current = strokeId;
 
-        const style = { color, width };
+        const style = {
+            color: mode === "eraser" ? "#000000" : color,
+            width,
+        };
+
 
         // start stroke on server (and others)
         socket.emit("stroke_start", {
@@ -248,14 +297,28 @@ export default function CanvasBoard() {
             return;
         }
 
-        const style = { color, width };
+        const style = {
+            color: mode === "eraser" ? "#000000" : color,
+            width,
+        };
+
         drawLine(ctx, prev, curr, style);
 
-        socket.emit("stroke_add", {
-            roomId: joinedRoom,
-            strokeId: myStrokeIdRef.current,
-            point: curr,
-        });
+        // socket.emit("stroke_add", {
+        //     roomId: joinedRoom,
+        //     strokeId: myStrokeIdRef.current,
+        //     point: curr,
+        // });
+
+        batchRef.current.push(curr);
+
+        // schedule flush once per frame
+        if (!rafRef.current) {
+            rafRef.current = requestAnimationFrame(() => {
+                flushBatch();
+                rafRef.current = null;
+            });
+        }
 
         lastPointRef.current = curr;
     };
@@ -265,6 +328,8 @@ export default function CanvasBoard() {
 
         isDrawingRef.current = false;
         lastPointRef.current = null;
+
+        flushBatch();
 
         if (myStrokeIdRef.current) {
             socket.emit("stroke_end", {
@@ -301,7 +366,7 @@ export default function CanvasBoard() {
                         }}
                     >
                         <div className="w-3 h-3 rounded-full bg-green-400 shadow-lg" />
-                        <div className="mt-1 text-[10px] text-white/70 bg-black/50 px-2 py-[2px] rounded-md">
+                        <div className="mt-1 text-[10px] text-white/70 bg-black/50 px-2 py-0.5 rounded-md">
                             {id.slice(0, 4)}
                         </div>
                     </div>
@@ -309,7 +374,7 @@ export default function CanvasBoard() {
             </div>
 
             {/* Panel */}
-            <div className="absolute top-4 left-4 w-[340px] bg-white/10 backdrop-blur-md rounded-2xl border border-white/10 p-4 space-y-3">
+            <div className="absolute top-4 left-4 w-85 bg-white/10 backdrop-blur-md rounded-2xl border border-white/10 p-4 space-y-3">
                 <div className="text-sm font-semibold">🎨 MVP-5 Undo</div>
 
                 <div className="flex gap-2">
@@ -334,6 +399,64 @@ export default function CanvasBoard() {
                     </span>
                 </div>
 
+                <div className="space-y-3">
+                    <div className="text-xs text-white/70 font-semibold">Brush</div>
+
+                    {/* Colors */}
+                    <div className="flex gap-2 flex-wrap">
+                        {["#ffffff", "#22c55e", "#3b82f6", "#eab308", "#ef4444", "#a855f7"].map(
+                            (c) => (
+                                <button
+                                    key={c}
+                                    onClick={() => {
+                                        setMode("pen");
+                                        setColor(c);
+                                    }}
+                                    className={`w-7 h-7 rounded-full border ${color === c && mode === "pen"
+                                        ? "border-white"
+                                        : "border-white/20"
+                                        }`}
+                                    style={{ backgroundColor: c }}
+                                />
+                            )
+                        )}
+                    </div>
+
+                    {/* Size */}
+                    <div className="flex items-center gap-3">
+                        <div className="text-xs text-white/70 w-12">Size</div>
+                        <input
+                            type="range"
+                            min={2}
+                            max={20}
+                            value={width}
+                            onChange={(e) => setWidth(Number(e.target.value))}
+                            className="flex-1"
+                        />
+                        <div className="text-xs text-white">{width}</div>
+                    </div>
+
+                    {/* Mode */}
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => setMode("pen")}
+                            className={`flex-1 px-3 py-2 rounded-xl text-sm font-semibold border border-white/10 ${mode === "pen" ? "bg-white text-black" : "bg-black/30 text-white"
+                                }`}
+                        >
+                            ✏️ Pen
+                        </button>
+
+                        <button
+                            onClick={() => setMode("eraser")}
+                            className={`flex-1 px-3 py-2 rounded-xl text-sm font-semibold border border-white/10 ${mode === "eraser" ? "bg-white text-black" : "bg-black/30 text-white"
+                                }`}
+                        >
+                            🧽 Eraser
+                        </button>
+                    </div>
+                </div>
+
+
                 <button
                     onClick={undoMyStroke}
                     disabled={!joinedRoom}
@@ -342,6 +465,16 @@ export default function CanvasBoard() {
                 >
                     Undo (My Last Stroke)
                 </button>
+
+                <button
+                    onClick={redoMyStroke}
+                    disabled={!joinedRoom}
+                    className="w-full px-3 py-2 rounded-xl text-sm font-semibold border border-white/10
+  bg-purple-500/90 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                    Redo (My Stroke)
+                </button>
+
 
                 <button
                     onClick={clearRoomCanvas}
