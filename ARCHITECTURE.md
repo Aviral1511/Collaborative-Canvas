@@ -198,26 +198,8 @@ Undo/Redo is done by removing strokes and replaying everything, which is:
 
 ## 🔄 Data Flow Diagram (Real-Time Sync)
 
-```mermaid
-flowchart LR
+<img width="1231" height="367" alt="image" src="https://github.com/user-attachments/assets/c661d8a2-8d31-4138-bfa6-761356a52583" />
 
-A[User A (Client)] -->|Join Room| S[Server (Socket.io)]
-S -->|room_state (history)| B[User B (Client)]
-
-A -->|Pointer Move / Draw| S
-S -->|stroke_start / stroke_add| B
-B -->|Render stroke live| B
-
-A -->|Cursor Move| S
-S -->|cursor_move broadcast| B
-B -->|Render ghost cursor| B
-
-A -->|Undo / Redo| S
-S -->|room_state (replay)| B
-
-A -->|Clear Canvas| S
-S -->|room_state (empty)| B
-```
 
 ## ✅ Summary
 

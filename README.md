@@ -83,7 +83,7 @@ collaborative-canvas/
 
 ## 📸 Screenshots
 
-![alt text](image.png)
+<img width="1834" height="965" alt="Screenshot 2026-01-30 162511" src="https://github.com/user-attachments/assets/8e1c56cf-a2b3-4fa7-b84a-68b0f3c91db5" />
 
 ## ✅ Setup & Run Locally
 
