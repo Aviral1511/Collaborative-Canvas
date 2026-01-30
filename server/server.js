@@ -11,9 +11,24 @@ app.get("/", (req, res) => {
 });
 
 const httpServer = createServer(app);
+const allowedOrigins = [
+  process.env.CLIENT_URL,
+  "http://localhost:5173",
+];
 
 const io = new Server(httpServer, {
-  cors: { origin: process.env.CLIENT_URL || "*", methods: ["GET", "POST"] },
+  cors: {
+    origin: (origin, cb) => {
+      // allow Postman / server-to-server calls
+      if (!origin) return cb(null, true);
+
+      // allow listed origins
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+
+      return cb(new Error("CORS blocked for origin: " + origin), false);
+    },
+    methods: ["GET", "POST"],
+  },
 });
 
 // roomId -> strokes[]
